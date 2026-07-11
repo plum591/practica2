@@ -13,53 +13,52 @@
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent),
-      ui(new Ui::MainWindow),
-      m_previousPage(0),
-      m_wordHidden(false)
+    ui(new Ui::MainWindow),
+    m_previousPage(0),
+    m_wordHidden(false),
+    m_joining(false)
 {
     ui->setupUi(this);
     this->setWindowTitle("Игра крокодил");
 
-    // Таймер
     m_timer = new QTimer(this);
     connect(m_timer, &QTimer::timeout, this, &MainWindow::onTimerTick);
 
 
-    // Кнопки и слоты
-    // Экран 0
-    connect(ui->btnStart,        &QPushButton::clicked, this, &MainWindow::onStart);
-    connect(ui->btnExit,         &QPushButton::clicked, this, &MainWindow::onExit);
 
-    // Экран 1
-    connect(ui->btnAddPlayer,    &QPushButton::clicked, this, &MainWindow::onAddPlayer);
+    connect(ui->btnCreate, &QPushButton::clicked, this, &MainWindow::onCreate);
+    connect(ui->btnJoin,   &QPushButton::clicked, this, &MainWindow::onJoin);
+    connect(ui->btnExit,   &QPushButton::clicked, this, &MainWindow::onExit);
+
+    connect(ui->pushButton, &QPushButton::clicked, this, &MainWindow::onNickContinue);
+    connect(ui->lineEdit, &QLineEdit::textChanged, this, [this](const QString& text) {
+        ui->lblCharCount->setText(QString("%1/16").arg(text.length()));
+    });
+
+    connect(ui->pushButton_3, &QPushButton::clicked, this, &MainWindow::onRefreshLobbies);
+    connect(ui->pushButton_2, &QPushButton::clicked, this, &MainWindow::onJoinConnect);
+
     connect(ui->btnRemovePlayer, &QPushButton::clicked, this, &MainWindow::onRemovePlayer);
     connect(ui->btnStartGame,    &QPushButton::clicked, this, &MainWindow::onStartGame);
 
-    // Экран 2
     connect(ui->btnConfirmWord,  &QPushButton::clicked, this, &MainWindow::onConfirmWord);
 
-    // Экран 3
-    connect(ui->btnFinish,       &QPushButton::clicked, this, &MainWindow::onFinish);
-    connect(ui->btnClear,        &QPushButton::clicked, this, &MainWindow::onClearCanvas);
-    connect(ui->btnHideWord,     &QPushButton::clicked, this, &MainWindow::onHideWord);
+    connect(ui->btnFinish,   &QPushButton::clicked, this, &MainWindow::onFinish);
+    connect(ui->btnClear,    &QPushButton::clicked, this, &MainWindow::onClearCanvas);
+    connect(ui->btnHideWord, &QPushButton::clicked, this, &MainWindow::onHideWord);
     connect(ui->spinWidth, QOverload<int>::of(&QSpinBox::valueChanged),
             this, [this](int v){ ui->canvas->setPenWidth(v); });
 
-    // Экран 4
-    connect(ui->btnContinue,     &QPushButton::clicked, this, &MainWindow::onContinue);
+    connect(ui->btnContinue, &QPushButton::clicked, this, &MainWindow::onContinue);
 
-    // Экран 5
-    connect(ui->btnNewGame,      &QPushButton::clicked, this, &MainWindow::onNewGame);
+    connect(ui->btnNewGame,  &QPushButton::clicked, this, &MainWindow::onNewGame);
 
-    // Экран меню паузы (страница 6)
-    connect(ui->btnMenuReset,    &QPushButton::clicked, this, &MainWindow::onMenuReset);
-    connect(ui->btnMenuExit,     &QPushButton::clicked, this, &MainWindow::onMenuExit);
-    connect(ui->btnMenuOk,       &QPushButton::clicked, this, &MainWindow::onMenuOk);
+    connect(ui->btnMenuReset, &QPushButton::clicked, this, &MainWindow::onMenuReset);
+    connect(ui->btnMenuExit,  &QPushButton::clicked, this, &MainWindow::onMenuExit);
+    connect(ui->btnMenuOk,    &QPushButton::clicked, this, &MainWindow::onMenuOk);
 
-    // Палитра рисования
     buildPalette();
 
-    // Плавающие кнопки "≡" и "?"
     m_btnMenu = new QPushButton("≡", this);
     m_btnMenu->setFixedSize(26, 26);
     m_btnMenu->move(10, 11);
@@ -78,11 +77,15 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_btnHelp, &QPushButton::clicked, this, &MainWindow::onShowRules);
 
 
-    ui->stack->setCurrentIndex(0);
+    goToPage(ui->page_1);
 }
 
 MainWindow::~MainWindow() {
     delete ui;
+}
+
+void MainWindow::goToPage(QWidget* page) {
+    ui->stack->setCurrentIndex(ui->stack->indexOf(page));
 }
 
 void MainWindow::resizeEvent(QResizeEvent* event) {
@@ -94,75 +97,85 @@ void MainWindow::resizeEvent(QResizeEvent* event) {
     }
 
     if (m_btnHelp) {
-        // Динамически отступаем от правого края окна на 36 пикселей (ширина кнопки + отступ)
         int newX = this->width() - m_btnHelp->width() - 10;
-        m_btnHelp->move(newX, 11); // Заменили 740 на newX
+        m_btnHelp->move(newX, 11);
         m_btnHelp->raise();
     }
 }
 
 
-//ЭКРАН 0 — Главное меню
 
-void MainWindow::onStart() {
-    ui->listPlayers->clear();
+void MainWindow::onCreate() {
+    m_joining = false;
+    ui->lineEdit->clear();
+    goToPage(ui->page_2);
+}
 
-    // Сбрасываем выбор режима сложности
-    ui->radioEasy->setAutoExclusive(false);
-    ui->radioMedium->setAutoExclusive(false);
-    ui->radioHard->setAutoExclusive(false);
-
-    ui->radioEasy->setChecked(false);
-    ui->radioMedium->setChecked(false);
-    ui->radioHard->setChecked(false);
-
-    ui->radioEasy->setAutoExclusive(true);
-    ui->radioMedium->setAutoExclusive(true);
-    ui->radioHard->setAutoExclusive(true);
-
-    ui->stack->setCurrentIndex(1);
+void MainWindow::onJoin() {
+    m_joining = true;
+    ui->lineEdit->clear();
+    goToPage(ui->page_2);
 }
 
 void MainWindow::onExit() {
     close();
 }
 
-//  ЭКРАН 1 — Создание игры
-void MainWindow::onAddPlayer() {
-    bool ok = false;
-    QString name = QInputDialog::getText(this, "Новый игрок",
-                                         "Имя игрока:",
-                                         QLineEdit::Normal, "", &ok);
-    if (!ok) {
-        return;   // нажали "Отмена"
-    }
 
-    name = name.trimmed();
 
-    // Проверка: имя не пустое
-    if (name.isEmpty()) {
-        QMessageBox::warning(this, "Ошибка", "Имя не может быть пустым!");
+void MainWindow::onNickContinue() {
+    QString nick = ui->lineEdit->text().trimmed();
+
+    if (nick.isEmpty()) {
+        QMessageBox::warning(this, "Ошибка", "Введите никнейм!");
         return;
     }
 
-    // Проверка: имя не длиннее 12 символов
-    if (name.length() > 12) {
-        QMessageBox::warning(this, "Ошибка",
-                             "Имя игрока не может превышать 12 символов!");
-        return;
-    }
+    m_nickname = nick;
 
-    // Проверка: такое имя уже есть в списке
-    for (int i = 0; i < ui->listPlayers->count(); i++) {
-        if (ui->listPlayers->item(i)->text() == name) {
-            QMessageBox::warning(this, "Ошибка",
-                                 "Игрок с таким именем уже существует!");
-            return;
+    if (m_joining) {
+        onRefreshLobbies();
+        goToPage(ui->page_join);
+    } else {
+        m_game.resetGame();
+        ui->listPlayers->clear();
+        ui->listPlayers->addItem(m_nickname + "  (хост)");
+
+        for (QRadioButton* r : {ui->radioEasy, ui->radioMedium, ui->radioHard}) {
+            r->setAutoExclusive(false);
+            r->setChecked(false);
+            r->setAutoExclusive(true);
         }
+        goToPage(ui->page_lobby);
+    }
+}
+
+
+
+void MainWindow::onRefreshLobbies() {
+    ui->listWidget->clear();
+    ui->listWidget->addItem("Комната 2");
+    ui->listWidget->addItem("Комната 1");
+}
+
+void MainWindow::onJoinConnect() {
+    if (ui->listWidget->currentRow() < 0) {
+        QMessageBox::warning(this, "Ошибка", "Выберите комнату из списка!");
+        return;
     }
 
-    ui->listPlayers->addItem(name);
+    ui->listPlayers->clear();
+    ui->listPlayers->addItem("Хост");
+    ui->listPlayers->addItem(m_nickname + "  (вы)");
+
+    for (QRadioButton* r : {ui->radioEasy, ui->radioMedium, ui->radioHard}) {
+        r->setAutoExclusive(false);
+        r->setChecked(false);
+        r->setAutoExclusive(true);
+    }
+    goToPage(ui->page_lobby);
 }
+
 
 void MainWindow::onRemovePlayer() {
     int row = ui->listPlayers->currentRow();
@@ -172,10 +185,11 @@ void MainWindow::onRemovePlayer() {
 }
 
 void MainWindow::onStartGame() {
-    if (ui->listPlayers->count() < 3) {
-        QMessageBox::warning(this, "Ошибка", "Добавьте хотя бы 3 игроков!");
-        return;
-    }
+    // if (ui->listPlayers->count() < 3) {
+    //     QMessageBox::warning(this, "Ошибка", "Нужно хотя бы 3 игрока!");
+    //     return;
+    // }
+
 
     if (!ui->radioEasy->isChecked() &&
         !ui->radioMedium->isChecked() &&
@@ -185,31 +199,34 @@ void MainWindow::onStartGame() {
     }
 
     Difficulty diff = Difficulty::Easy;
-    if (ui->radioMedium->isChecked())diff = Difficulty::Medium;
-    if (ui->radioHard->isChecked())diff = Difficulty::Hard;
+    if (ui->radioMedium->isChecked()) diff = Difficulty::Medium;
+    if (ui->radioHard->isChecked())   diff = Difficulty::Hard;
 
     m_game.resetGame();
     m_game.startSession(diff, 20);
+
     for (int i = 0; i < ui->listPlayers->count(); i++) {
-        m_game.players().addPlayer(
-            ui->listPlayers->item(i)->text().toStdString());
+        QString name = ui->listPlayers->item(i)->text();
+        int cut = name.indexOf("  ");
+        if (cut >= 0) name = name.left(cut);
+        m_game.players().addPlayer(name.trimmed().toStdString());
     }
 
     m_game.startTurn();
     showWordScreen();
 }
 
-//  ЭКРАН 2 — Выбор слова
+
 void MainWindow::showWordScreen() {
     QString header = QString(
-    "<table width='100%'>"
-    "<tr>"
-    "<td align='left'>Ход: %1</td>"
-    "<td align='right'>Раунд: %2</td>"
-    "</tr>"
-    "</table>")
-    .arg(QString::fromStdString(m_game.currentArtistName()))
-    .arg(m_game.currentRound());
+                         "<table width='100%'>"
+                         "<tr>"
+                         "<td align='left'>Ход: %1</td>"
+                         "<td align='right'>Раунд: %2</td>"
+                         "</tr>"
+                         "</table>")
+                         .arg(QString::fromStdString(m_game.currentArtistName()))
+                         .arg(m_game.currentRound());
     ui->lblWordHeader->setText(header);
 
     auto words = m_game.wordChoices();
@@ -218,19 +235,13 @@ void MainWindow::showWordScreen() {
         ui->radioWord1->setText(QString::fromStdString(words[1]));
         ui->radioWord2->setText(QString::fromStdString(words[2]));
     }
-    ui->radioWord0->setAutoExclusive(false);
-    ui->radioWord1->setAutoExclusive(false);
-    ui->radioWord2->setAutoExclusive(false);
+    for (QRadioButton* r : {ui->radioWord0, ui->radioWord1, ui->radioWord2}) {
+        r->setAutoExclusive(false);
+        r->setChecked(false);
+        r->setAutoExclusive(true);
+    }
 
-    ui->radioWord0->setChecked(false);
-    ui->radioWord1->setChecked(false);
-    ui->radioWord2->setChecked(false);
-
-    ui->radioWord0->setAutoExclusive(true);
-    ui->radioWord1->setAutoExclusive(true);
-    ui->radioWord2->setAutoExclusive(true);
-
-    ui->stack->setCurrentIndex(2);
+    goToPage(ui->page_4);
 }
 
 void MainWindow::onConfirmWord() {
@@ -249,20 +260,19 @@ void MainWindow::onConfirmWord() {
 }
 
 
-//  ЭКРАН 3 — Рисование
 void MainWindow::showDrawScreen() {
     QString header = QString(
-    "<table width='100%'>"
-    "<tr>"
-    "<td align='left'>Ход: %1</td>"
-    "<td align='right'>Раунд: %2</td>"
-    "</tr>"
-    "</table>")
-    .arg(QString::fromStdString(m_game.currentArtistName()))
-    .arg(m_game.currentRound());
+                         "<table width='100%'>"
+                         "<tr>"
+                         "<td align='left'>Ход: %1</td>"
+                         "<td align='right'>Раунд: %2</td>"
+                         "</tr>"
+                         "</table>")
+                         .arg(QString::fromStdString(m_game.currentArtistName()))
+                         .arg(m_game.currentRound());
     ui->lblWordHeader_2->setText(header);
 
-    m_wordHidden =  true;
+    m_wordHidden = true;
     ui->btnHideWord->setText("Показать");
     ui->lblWord->setText("• • • • •");
 
@@ -274,8 +284,9 @@ void MainWindow::showDrawScreen() {
     updateTimerLabel();
     m_timer->start(1000);
 
-    ui->stack->setCurrentIndex(3);
+    goToPage(ui->page_6);
 }
+
 void MainWindow::onTimerTick() {
     m_game.tick();
     updateTimerLabel();
@@ -314,7 +325,7 @@ void MainWindow::onHideWord() {
     }
 }
 
-//  ПАЛИТРА
+
 void MainWindow::buildPalette() {
     QGridLayout* grid = new QGridLayout(ui->paletteArea);
     grid->setSpacing(5);
@@ -334,9 +345,9 @@ void MainWindow::buildPalette() {
         QPushButton* btn = new QPushButton();
         btn->setFixedSize(30, 30);
         btn->setStyleSheet(QString(
-            "QPushButton { background-color:%1; border-radius:15px;"
-            " border:2px solid #C8A96E; padding:0; }"
-            "QPushButton:hover { border:2px solid white; }").arg(c));
+                               "QPushButton { background-color:%1; border-radius:15px;"
+                               " border:2px solid #C8A96E; padding:0; }"
+                               "QPushButton:hover { border:2px solid white; }").arg(c));
         connect(btn, &QPushButton::clicked, this, [this, c]() {
             ui->canvas->setPenColor(QColor(c));
             ui->canvas->setEraser(false);
@@ -346,7 +357,6 @@ void MainWindow::buildPalette() {
         if (col >= 2) { col = 0; row++; }
     }
 
-    // Карандаш и ластик
     QPushButton* btnPencil = new QPushButton("✏ Карандаш");
     QPushButton* btnEraser = new QPushButton("◻ Ластик");
     btnPencil->setStyleSheet(
@@ -367,9 +377,8 @@ void MainWindow::buildPalette() {
     grid->addWidget(btnEraser, row + 2, 0, 1, 2);
 }
 
-//  ЭКРАН 4 — Расчёт очков
+
 void MainWindow::showScoreScreen() {
-    // Удаляем все старые виджеты полностью
     if (ui->scoreArea->layout()) {
         QLayoutItem* item;
         while ((item = ui->scoreArea->layout()->takeAt(0)) != nullptr) {
@@ -414,7 +423,6 @@ void MainWindow::showScoreScreen() {
             QString("%1 / 20").arg(m_game.players().player(i).score()));
         lblScore->setMinimumWidth(90);
 
-
         connect(btnPlus, &QPushButton::clicked, this, [this, i, lblScore]() {
             if (m_game.players().player(i).score() >= 21) return;
             m_game.addPoints(i, 3);
@@ -437,7 +445,7 @@ void MainWindow::showScoreScreen() {
     }
 
     box->addStretch();
-    ui->stack->setCurrentIndex(4);
+    goToPage(ui->page_7);
 }
 
 void MainWindow::onContinue() {
@@ -445,46 +453,46 @@ void MainWindow::onContinue() {
         ui->lblWinner->setText(
             QString("%1 победил!")
                 .arg(QString::fromStdString(m_game.winnerName())));
-        ui->stack->setCurrentIndex(5);
+        goToPage(ui->page_8);
     } else {
         m_game.startTurn();
         showWordScreen();
     }
 }
 
-// ЭКРАН 5 — Конец игры
+
 void MainWindow::onNewGame() {
     m_game.resetGame();
     ui->listPlayers->clear();
     m_timer->stop();
-    ui->stack->setCurrentIndex(0);
+    goToPage(ui->page_1);
 }
 
-// Правила
+
 void MainWindow::onShowRules() {
     QMessageBox::information(this, "Правила игры «Крокодил»",
-        "1. Добавьте игроков (минимум 3) и выберите режим сложности.\n"
-        "2. Художник выбирает одно из трёх слов.\n"
-        "3. Художник рисует слово за 60 секунд,\n"
-        "   остальные угадывают вслух.\n"
-        "4. Угадавшему и художнику: +3 очка каждому.\n"
-        "5. Если угадали — нажмите «Завершить».\n"
-        "6. Побеждает первый, кто наберёт 20 очков.");
+                             "1. Создайте игру или присоединитесь к чужой.\n"
+                             "2. Введите свой никнейм.\n"
+                             "3. Художник выбирает одно из трёх слов.\n"
+                             "4. Художник рисует слово за 60 секунд,\n"
+                             "   остальные угадывают.\n"
+                             "5. Угадавшему и художнику: +3 очка каждому.\n"
+                             "6. Побеждает первый, кто наберёт 20 очков.");
 }
 
 void MainWindow::onOpenMenu() {
-    if (ui->stack->currentIndex() == 6) return;  // уже в меню
+    if (ui->stack->currentWidget() == ui->page_9) return;
     m_previousPage = ui->stack->currentIndex();
     m_timer->stop();
-    ui->stack->setCurrentIndex(6);
+    goToPage(ui->page_9);
 }
 
-//  МЕНЮ ПАУЗЫ
+
 void MainWindow::onMenuReset() {
     m_timer->stop();
     m_game.resetGame();
     ui->listPlayers->clear();
-    ui->stack->setCurrentIndex(0);
+    goToPage(ui->page_1);
 }
 
 void MainWindow::onMenuExit() {
@@ -493,8 +501,7 @@ void MainWindow::onMenuExit() {
 
 void MainWindow::onMenuOk() {
     ui->stack->setCurrentIndex(m_previousPage);
-    // Если вернулись на экран рисования — возобновляем таймер
-    if (m_previousPage == 3 && !m_game.isTimeUp()) {
+    if (ui->stack->currentWidget() == ui->page_6 && !m_game.isTimeUp()) {
         m_timer->start(1000);
     }
 }
