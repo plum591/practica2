@@ -9,6 +9,17 @@
 #include <QVBoxLayout>
 #include <QGridLayout>
 #include <QResizeEvent>
+#include <QNetworkInterface>
+
+static QString myLocalIp() {
+    for (const QHostAddress& addr : QNetworkInterface::allAddresses()) {
+        if (addr.protocol() == QAbstractSocket::IPv4Protocol &&
+            !addr.isLoopback()) {
+            return addr.toString();
+        }
+    }
+    return "не найден";
+}
 
 
 MainWindow::MainWindow(QWidget* parent)
@@ -24,7 +35,15 @@ MainWindow::MainWindow(QWidget* parent)
     m_timer = new QTimer(this);
     connect(m_timer, &QTimer::timeout, this, &MainWindow::onTimerTick);
 
-
+    m_net = new NetworkManager(this);
+    connect(m_net, &NetworkManager::peerConnected,
+            this, &MainWindow::onPeerConnected);
+    connect(m_net, &NetworkManager::peerDisconnected,
+            this, &MainWindow::onPeerDisconnected);
+    connect(m_net, &NetworkManager::messageReceived,
+            this, &MainWindow::onNetMessage);
+    connect(m_net, &NetworkManager::errorOccurred,
+            this, &MainWindow::onNetError);
 
     connect(ui->btnCreate, &QPushButton::clicked, this, &MainWindow::onCreate);
     connect(ui->btnJoin,   &QPushButton::clicked, this, &MainWindow::onJoin);
@@ -35,7 +54,6 @@ MainWindow::MainWindow(QWidget* parent)
         ui->lblCharCount->setText(QString("%1/16").arg(text.length()));
     });
 
-    connect(ui->pushButton_3, &QPushButton::clicked, this, &MainWindow::onRefreshLobbies);
     connect(ui->pushButton_2, &QPushButton::clicked, this, &MainWindow::onJoinConnect);
 
     connect(ui->btnRemovePlayer, &QPushButton::clicked, this, &MainWindow::onRemovePlayer);
@@ -122,25 +140,26 @@ void MainWindow::onExit() {
 }
 
 
-
 void MainWindow::onNickContinue() {
     QString nick = ui->lineEdit->text().trimmed();
-
     if (nick.isEmpty()) {
         QMessageBox::warning(this, "Ошибка", "Введите никнейм!");
         return;
     }
-
     m_nickname = nick;
-
     if (m_joining) {
         onRefreshLobbies();
         goToPage(ui->page_join);
     } else {
+        if (m_net->startHost(55555)) {
+            QMessageBox::information(this, "Вы хост",
+                                     "Пусть друзья подключаются к вашему IP:\n" + myLocalIp() +
+                                         "\nПорт: 55555");
+        }
+
         m_game.resetGame();
         ui->listPlayers->clear();
         ui->listPlayers->addItem(m_nickname + "  (хост)");
-
         for (QRadioButton* r : {ui->radioEasy, ui->radioMedium, ui->radioHard}) {
             r->setAutoExclusive(false);
             r->setChecked(false);
@@ -151,30 +170,27 @@ void MainWindow::onNickContinue() {
 }
 
 
-
 void MainWindow::onRefreshLobbies() {
-    ui->listWidget->clear();
-    ui->listWidget->addItem("Комната 2");
-    ui->listWidget->addItem("Комната 1");
 }
 
 void MainWindow::onJoinConnect() {
-    if (ui->listWidget->currentRow() < 0) {
-        QMessageBox::warning(this, "Ошибка", "Выберите комнату из списка!");
+    QString ip = ui->editIp->text().trimmed();
+    QString portText = ui->editPort->text().trimmed();
+
+    if (ip.isEmpty()) {
+        QMessageBox::warning(this, "Ошибка", "Введите IP-адрес хоста!");
         return;
     }
 
-    ui->listPlayers->clear();
-    ui->listPlayers->addItem("Хост");
-    ui->listPlayers->addItem(m_nickname + "  (вы)");
-
-    for (QRadioButton* r : {ui->radioEasy, ui->radioMedium, ui->radioHard}) {
-        r->setAutoExclusive(false);
-        r->setChecked(false);
-        r->setAutoExclusive(true);
+    quint16 port = 55555;
+    if (!portText.isEmpty()) {
+        port = portText.toUShort();
     }
-    goToPage(ui->page_lobby);
+
+
+    m_net->connectToHost(ip, port);
 }
+
 
 
 void MainWindow::onRemovePlayer() {
@@ -504,4 +520,34 @@ void MainWindow::onMenuOk() {
     if (ui->stack->currentWidget() == ui->page_6 && !m_game.isTimeUp()) {
         m_timer->start(1000);
     }
+}
+
+// Сеть
+
+void MainWindow::onPeerConnected() {
+    if (m_net->isHost()) {
+    } else {
+        m_net->sendMessage("NICK:" + m_nickname);
+
+        ui->listPlayers->clear();
+        ui->listPlayers->addItem("Хост");
+        ui->listPlayers->addItem(m_nickname + "  (вы)");
+        goToPage(ui->page_lobby);
+    }
+}
+
+void MainWindow::onPeerDisconnected() {
+    QMessageBox::information(this, "Сеть", "Игрок отключился.");
+}
+
+void MainWindow::onNetMessage(const QString& text) {
+    if (text.startsWith("NICK:")) {
+        QString nick = text.mid(5);
+        ui->listPlayers->addItem(nick);
+    }
+}
+
+// Ошибка сети.
+void MainWindow::onNetError(const QString& text) {
+    QMessageBox::warning(this, "Сеть", text);
 }

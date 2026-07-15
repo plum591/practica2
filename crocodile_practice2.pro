@@ -1,4 +1,4 @@
-QT += widgets
+QT += widgets network
 
 CONFIG += c++17
 
@@ -7,6 +7,7 @@ SOURCES += \
     gameengine.cpp \
     main.cpp \
     mainwindow.cpp \
+    networkmanager.cpp \
     player.cpp \
     playermanager.cpp \
     worddictionary.cpp
@@ -16,6 +17,7 @@ HEADERS += \
     drawingcanvas.h \
     gameengine.h \
     mainwindow.h \
+    networkmanager.h \
     player.h \
     playermanager.h \
     worddictionary.h

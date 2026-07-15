@@ -6,6 +6,7 @@
 #include <QPushButton>
 #include <QString>
 #include "gameengine.h"
+#include "networkmanager.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -51,6 +52,11 @@ private slots:
     void onMenuExit();
     void onMenuOk();
 
+    void onPeerConnected();
+    void onPeerDisconnected();
+    void onNetMessage(const QString& text);
+    void onNetError(const QString& text);
+
 private:
     void showWordScreen();
     void showDrawScreen();
@@ -62,6 +68,7 @@ private:
 
     Ui::MainWindow* ui;
     GameEngine  m_game;
+    NetworkManager* m_net;
     QTimer*     m_timer;
 
     QPushButton* m_btnMenu;
