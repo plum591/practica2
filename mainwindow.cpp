@@ -10,6 +10,7 @@
 #include <QGridLayout>
 #include <QResizeEvent>
 #include <QNetworkInterface>
+#include <QClipboard>
 
 static QString myLocalIp() {
     for (const QHostAddress& addr : QNetworkInterface::allAddresses()) {
@@ -58,6 +59,13 @@ MainWindow::MainWindow(QWidget* parent)
 
     connect(ui->btnRemovePlayer, &QPushButton::clicked, this, &MainWindow::onRemovePlayer);
     connect(ui->btnStartGame,    &QPushButton::clicked, this, &MainWindow::onStartGame);
+    connect(ui->btnCopyIp, &QPushButton::clicked, this, [this]() {
+        QApplication::clipboard()->setText(myLocalIp());
+        ui->btnCopyIp->setText("✓");
+        QTimer::singleShot(1000, this, [this]() {
+            ui->btnCopyIp->setText("📋");
+        });
+    });
 
     connect(ui->btnConfirmWord,  &QPushButton::clicked, this, &MainWindow::onConfirmWord);
 
@@ -66,7 +74,11 @@ MainWindow::MainWindow(QWidget* parent)
     connect(ui->btnHideWord, &QPushButton::clicked, this, &MainWindow::onHideWord);
     connect(ui->spinWidth, QOverload<int>::of(&QSpinBox::valueChanged),
             this, [this](int v){ ui->canvas->setPenWidth(v); });
-
+    connect(ui->canvas, &DrawingCanvas::lineDrawn, this,
+            [this](int x1, int y1, int x2, int y2, const QColor& color, int width) {
+                m_net->sendMessage(QString("DRAW:%1;%2;%3;%4;%5;%6")
+                .arg(x1).arg(y1).arg(x2).arg(y2).arg(color.name()).arg(width));
+            });
     connect(ui->btnContinue, &QPushButton::clicked, this, &MainWindow::onContinue);
 
     connect(ui->btnNewGame,  &QPushButton::clicked, this, &MainWindow::onNewGame);
@@ -152,12 +164,12 @@ void MainWindow::onNickContinue() {
         goToPage(ui->page_join);
     } else {
         if (m_net->startHost(55555)) {
-            QMessageBox::information(this, "Вы хост",
-                                     "Пусть друзья подключаются к вашему IP:\n" + myLocalIp() +
-                                         "\nПорт: 55555");
+            ui->lblHostInfo->setText(
+                "IP: " + myLocalIp() + " порт: 55555");
         }
-
         m_game.resetGame();
+        m_players.clear();
+        m_players << m_nickname;
         ui->listPlayers->clear();
         ui->listPlayers->addItem(m_nickname + "  (хост)");
         for (QRadioButton* r : {ui->radioEasy, ui->radioMedium, ui->radioHard}) {
@@ -194,10 +206,17 @@ void MainWindow::onJoinConnect() {
 
 
 void MainWindow::onRemovePlayer() {
-    int row = ui->listPlayers->currentRow();
-    if (row >= 0) {
-        delete ui->listPlayers->takeItem(row);
+    if (!m_net->isHost()) {
+        return;
     }
+
+    int row = ui->listPlayers->currentRow();
+    if (row <= 0) {
+        QMessageBox::information(this, "Игроки", "Нельзя удалить хоста.");
+        return;
+    }
+
+    delete ui->listPlayers->takeItem(row);
 }
 
 void MainWindow::onStartGame() {
@@ -206,6 +225,11 @@ void MainWindow::onStartGame() {
     //     return;
     // }
 
+    if (!m_net->isHost()) {
+        QMessageBox::information(this, "Игра",
+                                 "Начать игру может только хост.");
+        return;
+    }
 
     if (!ui->radioEasy->isChecked() &&
         !ui->radioMedium->isChecked() &&
@@ -218,18 +242,19 @@ void MainWindow::onStartGame() {
     if (ui->radioMedium->isChecked()) diff = Difficulty::Medium;
     if (ui->radioHard->isChecked())   diff = Difficulty::Hard;
 
+    m_difficulty = diff;
+
     m_game.resetGame();
     m_game.startSession(diff, 20);
 
-    for (int i = 0; i < ui->listPlayers->count(); i++) {
-        QString name = ui->listPlayers->item(i)->text();
-        int cut = name.indexOf("  ");
-        if (cut >= 0) name = name.left(cut);
-        m_game.players().addPlayer(name.trimmed().toStdString());
+    for (const QString& name : m_players) {
+        m_game.players().addPlayer(name.toStdString());
     }
 
-    m_game.startTurn();
-    showWordScreen();
+    int d = (diff == Difficulty::Easy) ? 0 : (diff == Difficulty::Medium ? 1 : 2);
+    m_net->sendMessage("START:" + QString::number(d));
+
+    hostStartTurn();
 }
 
 
@@ -271,10 +296,27 @@ void MainWindow::onConfirmWord() {
     int idx = 0;
     if (ui->radioWord1->isChecked()) idx = 1;
     if (ui->radioWord2->isChecked()) idx = 2;
-    m_game.chooseWord(idx);
-    showDrawScreen();
-}
 
+    QString chosen = (idx == 0) ? ui->radioWord0->text(): (idx == 1) ? ui->radioWord1->text(): ui->radioWord2->text();
+
+    m_net->sendMessage("WORD:" + chosen);
+
+    showDrawScreen();
+    ui->canvas->clear();
+    ui->canvas->setDrawingEnabled(true);
+    ui->lblWord->setText(chosen);
+    m_wordHidden = false;
+    ui->btnHideWord->setText("Скрыть");
+
+    if (m_net->isHost()) {
+        m_game.chooseWord(idx);
+        m_game.startTimer(60);
+        updateTimerLabel();
+        m_timer->start(1000);
+    } else {
+        m_net->sendMessage("STARTTIMER:");
+    }
+}
 
 void MainWindow::showDrawScreen() {
     QString header = QString(
@@ -296,9 +338,7 @@ void MainWindow::showDrawScreen() {
     ui->canvas->setPenColor(Qt::black);
     ui->canvas->setPenWidth(ui->spinWidth->value());
 
-    m_game.startTimer(60);
     updateTimerLabel();
-    m_timer->start(1000);
 
     goToPage(ui->page_6);
 }
@@ -306,8 +346,13 @@ void MainWindow::showDrawScreen() {
 void MainWindow::onTimerTick() {
     m_game.tick();
     updateTimerLabel();
+
+    m_net->sendMessage("TIME:" + QString::number(m_game.secondsLeft()));
+
     if (m_game.isTimeUp()) {
         m_timer->stop();
+        m_net->sendMessage("TIMEUP:");
+        hostBroadcastScores();
         showScoreScreen();
     }
 }
@@ -321,13 +366,18 @@ void MainWindow::updateTimerLabel() {
 }
 
 void MainWindow::onFinish() {
-    m_game.endTurnEarly();
-    m_timer->stop();
-    showScoreScreen();
+    if (m_net->isHost()) {
+        m_game.endTurnEarly();
+        m_timer->stop();
+        m_net->sendMessage("TIMEUP:");
+        showScoreScreen();
+    } else {
+        m_net->sendMessage("FINISH:");
+    }
 }
-
 void MainWindow::onClearCanvas() {
     ui->canvas->clear();
+    m_net->sendMessage("CLEAR:");
 }
 
 void MainWindow::onHideWord() {
@@ -413,12 +463,11 @@ void MainWindow::showScoreScreen() {
     box->setSpacing(4);
     box->setContentsMargins(8, 8, 8, 8);
 
-    for (int i = 0; i < m_game.players().count(); i++) {
+    for (int i = 0; i < m_players.size(); i++) {
         QHBoxLayout* row = new QHBoxLayout();
         row->setSpacing(8);
 
-        QLabel* lblName = new QLabel(
-            QString::fromStdString(m_game.players().player(i).name()));
+        QLabel* lblName = new QLabel(m_players[i]);
         lblName->setFixedWidth(200);
 
         QPushButton* btnPlus  = new QPushButton("+3");
@@ -435,21 +484,25 @@ void MainWindow::showScoreScreen() {
             " border-radius:8px; font-size:11pt; font-weight:bold; border:none; }"
             "QPushButton:hover { background-color:#E87070; }");
 
-        QLabel* lblScore = new QLabel(
-            QString("%1 / 20").arg(m_game.players().player(i).score()));
+        int score = (i < m_scores.size()) ? m_scores[i] : 0;
+        QLabel* lblScore = new QLabel(QString("%1 / 20").arg(score));
         lblScore->setMinimumWidth(90);
 
-        connect(btnPlus, &QPushButton::clicked, this, [this, i, lblScore]() {
-            if (m_game.players().player(i).score() >= 21) return;
-            m_game.addPoints(i, 3);
-            lblScore->setText(
-                QString("%1 / 20").arg(m_game.players().player(i).score()));
+        connect(btnPlus, &QPushButton::clicked, this, [this, i]() {
+            if (m_net->isHost()) {
+                m_game.addPoints(i, 3);
+                hostBroadcastScores();
+            } else {
+                m_net->sendMessage(QString("ADDPOINT:%1;3").arg(i));
+            }
         });
-
-        connect(btnMinus, &QPushButton::clicked, this, [this, i, lblScore]() {
-            m_game.addPoints(i, -3);
-            lblScore->setText(
-                QString("%1 / 20").arg(m_game.players().player(i).score()));
+        connect(btnMinus, &QPushButton::clicked, this, [this, i]() {
+            if (m_net->isHost()) {
+                m_game.addPoints(i, -3);
+                hostBroadcastScores();
+            } else {
+                m_net->sendMessage(QString("ADDPOINT:%1;-3").arg(i));
+            }
         });
 
         row->addWidget(lblName);
@@ -464,18 +517,44 @@ void MainWindow::showScoreScreen() {
     goToPage(ui->page_7);
 }
 
-void MainWindow::onContinue() {
-    if (m_game.isGameOver()) {
-        ui->lblWinner->setText(
-            QString("%1 победил!")
-                .arg(QString::fromStdString(m_game.winnerName())));
-        goToPage(ui->page_8);
-    } else {
-        m_game.startTurn();
-        showWordScreen();
+void MainWindow::hostBroadcastScores() {
+    QStringList parts;
+    m_scores.clear();
+    for (int i = 0; i < m_game.players().count(); i++) {
+        int s = m_game.players().player(i).score();
+        m_scores << s;
+        parts << QString::number(s);
+    }
+    m_net->sendMessage("SCORES:" + parts.join(";"));
+
+    showScoreScreen();
+}
+
+void MainWindow::applyScores(const QString& data) {
+    QStringList parts = data.split(";");
+    m_scores.clear();
+    for (const QString& p : parts) {
+        m_scores << p.toInt();
+    }
+    if (ui->stack->currentWidget() == ui->page_7) {
+        showScoreScreen();
     }
 }
 
+void MainWindow::onContinue() {
+    if (!m_net->isHost()) {
+        return;
+    }
+
+    if (m_game.isGameOver()) {
+        QString winner = QString::fromStdString(m_game.winnerName());
+        m_net->sendMessage("OVER:" + winner);
+        ui->lblWinner->setText(QString("%1 победил!").arg(winner));
+        goToPage(ui->page_8);
+    } else {
+        hostStartTurn();
+    }
+}
 
 void MainWindow::onNewGame() {
     m_game.resetGame();
@@ -523,16 +602,79 @@ void MainWindow::onMenuOk() {
 }
 
 // Сеть
+bool MainWindow::amIArtist() const {
+    return m_players.indexOf(m_nickname) == m_artistIndex;
+}
+
+void MainWindow::hostStartTurn() {
+    m_game.startTurn();
+    m_artistIndex = m_game.currentArtistIndex();
+
+    m_net->sendMessage(QString("TURN:%1;%2")
+                           .arg(m_artistIndex).arg(m_game.currentRound()));
+
+    auto words = m_game.wordChoices();
+    if (words.size() >= 3) {
+        m_lastWords.clear();
+        m_lastWords << QString::fromStdString(words[0])
+                    << QString::fromStdString(words[1])
+                    << QString::fromStdString(words[2]);
+
+        m_net->sendMessage(QString("WORDS:%1;%2;%3")
+                               .arg(m_lastWords[0])
+                               .arg(m_lastWords[1])
+                               .arg(m_lastWords[2]));
+    }
+
+    applyTurn(m_artistIndex, m_game.currentRound());
+}
+
+void MainWindow::applyTurn(int artistIndex, int round) {
+    m_artistIndex = artistIndex;
+
+    QString artistName = (artistIndex >= 0 && artistIndex < m_players.size())
+                             ? m_players[artistIndex] : QString();
+
+    QString header = QString(
+                         "<table width='100%'><tr>"
+                         "<td align='left'>Ход: %1</td>"
+                         "<td align='right'>Раунд: %2</td>"
+                         "</tr></table>").arg(artistName).arg(round);
+    ui->lblWordHeader->setText(header);
+
+    if (amIArtist()) {
+        if (m_lastWords.size() >= 3) {
+            ui->radioWord0->setText(m_lastWords[0]);
+            ui->radioWord1->setText(m_lastWords[1]);
+            ui->radioWord2->setText(m_lastWords[2]);
+        }
+        for (QRadioButton* r : {ui->radioWord0, ui->radioWord1, ui->radioWord2}) {
+            r->setAutoExclusive(false);
+            r->setChecked(false);
+            r->setAutoExclusive(true);
+        }
+        goToPage(ui->page_4);
+
+    } else {
+        showDrawScreen();
+        ui->lblWord->setText("• • • • •");
+        m_wordHidden = true;
+        ui->btnHideWord->setText("Показать");
+    }
+}
 
 void MainWindow::onPeerConnected() {
     if (m_net->isHost()) {
+
     } else {
         m_net->sendMessage("NICK:" + m_nickname);
-
-        ui->listPlayers->clear();
-        ui->listPlayers->addItem("Хост");
-        ui->listPlayers->addItem(m_nickname + "  (вы)");
         goToPage(ui->page_lobby);
+
+        ui->radioEasy->setEnabled(false);
+        ui->radioMedium->setEnabled(false);
+        ui->radioHard->setEnabled(false);
+        ui->btnStartGame->setEnabled(false);
+        ui->btnRemovePlayer->setEnabled(false);
     }
 }
 
@@ -542,8 +684,120 @@ void MainWindow::onPeerDisconnected() {
 
 void MainWindow::onNetMessage(const QString& text) {
     if (text.startsWith("NICK:")) {
-        QString nick = text.mid(5);
-        ui->listPlayers->addItem(nick);
+        if (m_net->isHost()) {
+            m_players << text.mid(5);
+            ui->listPlayers->addItem(text.mid(5));
+            m_net->sendMessage("PLAYERS:" + m_players.join(","));
+        }
+    }
+    else if (text.startsWith("PLAYERS:")) {
+        m_players = text.mid(8).split(",");
+        ui->listPlayers->clear();
+        for (int i = 0; i < m_players.size(); i++) {
+            QString label = m_players[i];
+            if (i == 0) {
+                label += "  (хост)";
+            } else if (m_players[i] == m_nickname) {
+                label += "  (вы)";
+            }
+            ui->listPlayers->addItem(label);
+        }
+    }
+    else if (text.startsWith("START:")) {
+        int d = text.mid(6).toInt();
+        m_difficulty = (d == 0) ? Difficulty::Easy
+                       : (d == 1) ? Difficulty::Medium : Difficulty::Hard;
+        if (!m_net->isHost()) {
+            m_game.resetGame();
+            m_game.startSession(m_difficulty, 20);
+            for (const QString& name : m_players) {
+                m_game.players().addPlayer(name.toStdString());
+            }
+        }
+    }
+    else if (text.startsWith("TURN:")) {
+        QStringList p = text.mid(5).split(";");
+        if (p.size() == 2) {
+            applyTurn(p[0].toInt(), p[1].toInt());
+        }
+    }
+    else if (text.startsWith("WORDS:")) {
+        m_lastWords = text.mid(6).split(";");
+        if (amIArtist() && m_lastWords.size() >= 3) {
+            ui->radioWord0->setText(m_lastWords[0]);
+            ui->radioWord1->setText(m_lastWords[1]);
+            ui->radioWord2->setText(m_lastWords[2]);
+            for (QRadioButton* r : {ui->radioWord0, ui->radioWord1, ui->radioWord2}) {
+                r->setAutoExclusive(false);
+                r->setChecked(false);
+                r->setAutoExclusive(true);
+            }
+            goToPage(ui->page_4);
+        }
+    }
+    else if (text.startsWith("WORD:")) {
+        if (!amIArtist()) {
+            showDrawScreen();
+            ui->canvas->clear();
+            ui->canvas->setDrawingEnabled(false);
+            ui->lblWord->setText("• • • • •");
+            m_wordHidden = true;
+            ui->btnHideWord->setText("Показать");
+        }
+    }
+    else if (text.startsWith("STARTTIMER:")) {
+        if (m_net->isHost()) {
+            m_game.startTimer(60);
+            updateTimerLabel();
+            m_timer->start(1000);
+        }
+    }
+    else if (text.startsWith("DRAW:")) {
+        QStringList d = text.mid(5).split(";");
+        if (d.size() == 6) {
+            ui->canvas->drawRemoteLine(d[0].toInt(), d[1].toInt(),
+                                       d[2].toInt(), d[3].toInt(),
+                                       QColor(d[4]), d[5].toInt());
+        }
+    }
+    else if (text.startsWith("CLEAR:")) {
+        ui->canvas->clear();
+    }
+    else if (text.startsWith("TIME:")) {
+        int s = text.mid(5).toInt();
+        int mm = s / 60, ss = s % 60;
+        ui->lblTimer->setText(
+            QString("%1:%2").arg(mm, 2, 10, QChar('0')).arg(ss, 2, 10, QChar('0')));
+    }
+    else if (text.startsWith("TIMEUP:")) {
+        if (!m_net->isHost()) {
+            showScoreScreen();
+        }
+    }
+    else if (text.startsWith("FINISH:")) {
+        if (m_net->isHost()) {
+            m_game.endTurnEarly();
+            m_timer->stop();
+            m_net->sendMessage("TIMEUP:");
+            hostBroadcastScores();
+            showScoreScreen();
+        }
+    }
+    else if (text.startsWith("ADDPOINT:")) {
+        if (m_net->isHost()) {
+            QStringList p = text.mid(9).split(";");
+            if (p.size() == 2) {
+                m_game.addPoints(p[0].toInt(), p[1].toInt());
+                hostBroadcastScores();
+            }
+        }
+    }
+    else if (text.startsWith("SCORES:")) {
+        applyScores(text.mid(7));
+    }
+    else if (text.startsWith("OVER:")) {
+        ui->lblWinner->setText(QString("%1 победил!").arg(text.mid(5)));
+        goToPage(ui->page_8);
     }
 }
 

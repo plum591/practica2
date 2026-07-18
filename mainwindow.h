@@ -7,6 +7,8 @@
 #include <QString>
 #include "gameengine.h"
 #include "networkmanager.h"
+#include <QStringList>
+#include <QList>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -79,6 +81,17 @@ private:
 
     bool    m_joining;
     QString m_nickname;
+    QStringList m_players;
+    Difficulty  m_difficulty;
+    int         m_artistIndex;
+
+    bool amIArtist() const;
+    void hostStartTurn();
+    void applyTurn(int artistIndex, int round);
+    QStringList m_lastWords;
+    QList<int> m_scores;
+    void applyScores(const QString& data);
+    void hostBroadcastScores();
 };
 
 #endif

@@ -16,6 +16,14 @@ public:
     void setEraser(bool on);                // включить/выключить ластик
     void clear();                           // очистить холст
 
+    void setDrawingEnabled(bool on);        // можно ли рисовать мышкой
+    void drawRemoteLine(int x1, int y1, int x2, int y2,
+                        const QColor& color, int width);  // линия из сети
+
+signals:
+    void lineDrawn(int x1, int y1, int x2, int y2,
+                   const QColor& color, int width);  // художник провёл линию
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
@@ -28,6 +36,7 @@ private:
     int     m_penWidth;    // текущая толщина
     bool    m_eraser;      // включён ли ластик
     bool    m_drawing;     // нажата ли кнопка мыши
+    bool    m_enabled = true;   // разрешено ли рисовать мышкой
     QPoint  m_lastPoint;   // предыдущая точка (чтобы вести линию)
 };
 
