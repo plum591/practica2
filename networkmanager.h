@@ -25,12 +25,13 @@ public:
     bool isConnected() const;
 
     void disconnectAll();
+    void kickByNick(const QString& nick);
 
 signals:
 
     void peerConnected();
 
-    void peerDisconnected();
+    void peerDisconnected(const QString& nick);
 
     void messageReceived(const QString& text);
 

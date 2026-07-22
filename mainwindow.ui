@@ -35,7 +35,7 @@
        </font>
       </property>
       <property name="currentIndex">
-       <number>7</number>
+       <number>3</number>
       </property>
       <widget class="QWidget" name="page_1">
        <property name="font">
@@ -524,14 +524,40 @@
                  <number>2</number>
                 </property>
                 <item>
-                 <widget class="QLabel" name="lblHostInfo">
+                 <widget class="QLabel" name="lblHostIp">
                   <property name="text">
-                   <string>TextLabel</string>
+                   <string/>
                   </property>
                  </widget>
                 </item>
                 <item>
                  <widget class="QPushButton" name="btnCopyIp">
+                  <property name="maximumSize">
+                   <size>
+                    <width>50</width>
+                    <height>50</height>
+                   </size>
+                  </property>
+                  <property name="font">
+                   <font>
+                    <family>Comic Sans MS</family>
+                    <pointsize>14</pointsize>
+                   </font>
+                  </property>
+                  <property name="text">
+                   <string>📋</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QLabel" name="lblHostPort">
+                  <property name="text">
+                   <string> </string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="btnCopyPort">
                   <property name="maximumSize">
                    <size>
                     <width>50</width>

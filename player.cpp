@@ -22,6 +22,9 @@ void Player::addPoints(int points) {
     if (m_score < 0) {       // счёт не может быть отрицательным
         m_score = 0;
     }
+    if (m_score > 100) {
+        m_score = 100;
+    }
 }
 
 void Player::resetScore() {

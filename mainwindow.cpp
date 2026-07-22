@@ -67,6 +67,14 @@ MainWindow::MainWindow(QWidget* parent)
         });
     });
 
+    connect(ui->btnCopyPort, &QPushButton::clicked, this, [this]() {
+        QApplication::clipboard()->setText("55555");
+        ui->btnCopyPort->setText("✓");
+        QTimer::singleShot(1000, this, [this]() {
+            ui->btnCopyPort->setText("📋");
+        });
+    });
+
     connect(ui->btnConfirmWord,  &QPushButton::clicked, this, &MainWindow::onConfirmWord);
 
     connect(ui->btnFinish,   &QPushButton::clicked, this, &MainWindow::onFinish);
@@ -164,8 +172,8 @@ void MainWindow::onNickContinue() {
         goToPage(ui->page_join);
     } else {
         if (m_net->startHost(55555)) {
-            ui->lblHostInfo->setText(
-                "IP: " + myLocalIp() + " порт: 55555");
+            ui->lblHostIp->setText("IP: " + myLocalIp());
+            ui->lblHostPort->setText("порт: 55555");
         }
         m_game.resetGame();
         m_players.clear();
@@ -203,8 +211,6 @@ void MainWindow::onJoinConnect() {
     m_net->connectToHost(ip, port);
 }
 
-
-
 void MainWindow::onRemovePlayer() {
     if (!m_net->isHost()) {
         return;
@@ -216,14 +222,19 @@ void MainWindow::onRemovePlayer() {
         return;
     }
 
-    delete ui->listPlayers->takeItem(row);
+    if (row >= m_players.size()) {
+        return;
+    }
+
+    QString nick = m_players[row];
+    m_net->kickByNick(nick);
 }
 
 void MainWindow::onStartGame() {
-    // if (ui->listPlayers->count() < 3) {
-    //     QMessageBox::warning(this, "Ошибка", "Нужно хотя бы 3 игрока!");
-    //     return;
-    // }
+    if (ui->listPlayers->count() < 2) {
+        QMessageBox::warning(this, "Ошибка", "Нужно хотя бы 2 игрока!");
+        return;
+    }
 
     if (!m_net->isHost()) {
         QMessageBox::information(this, "Игра",
@@ -245,7 +256,7 @@ void MainWindow::onStartGame() {
     m_difficulty = diff;
 
     m_game.resetGame();
-    m_game.startSession(diff, 20);
+    m_game.startSession(diff, 100);
 
     for (const QString& name : m_players) {
         m_game.players().addPlayer(name.toStdString());
@@ -326,8 +337,8 @@ void MainWindow::showDrawScreen() {
                          "<td align='right'>Раунд: %2</td>"
                          "</tr>"
                          "</table>")
-                         .arg(QString::fromStdString(m_game.currentArtistName()))
-                         .arg(m_game.currentRound());
+                         .arg((m_artistIndex >= 0 && m_artistIndex < m_players.size()) ? m_players[m_artistIndex] : QString())
+                         .arg(m_round);
     ui->lblWordHeader_2->setText(header);
 
     m_wordHidden = true;
@@ -337,6 +348,8 @@ void MainWindow::showDrawScreen() {
     ui->canvas->clear();
     ui->canvas->setPenColor(Qt::black);
     ui->canvas->setPenWidth(ui->spinWidth->value());
+    ui->canvas->setDrawingEnabled(amIArtist());
+    setDrawingControlsEnabled(amIArtist());
 
     updateTimerLabel();
 
@@ -375,7 +388,14 @@ void MainWindow::onFinish() {
         m_net->sendMessage("FINISH:");
     }
 }
+
+void MainWindow::setDrawingControlsEnabled(bool on) {
+    ui->btnHideWord->setEnabled(on);
+    ui->btnFinish->setEnabled(on);
+}
+
 void MainWindow::onClearCanvas() {
+    if (!amIArtist()) return;
     ui->canvas->clear();
     m_net->sendMessage("CLEAR:");
 }
@@ -470,8 +490,8 @@ void MainWindow::showScoreScreen() {
         QLabel* lblName = new QLabel(m_players[i]);
         lblName->setFixedWidth(200);
 
-        QPushButton* btnPlus  = new QPushButton("+3");
-        QPushButton* btnMinus = new QPushButton("-3");
+        QPushButton* btnPlus  = new QPushButton("+10");
+        QPushButton* btnMinus = new QPushButton("-10");
         btnPlus->setFixedSize(55, 32);
         btnMinus->setFixedSize(55, 32);
 
@@ -485,23 +505,23 @@ void MainWindow::showScoreScreen() {
             "QPushButton:hover { background-color:#E87070; }");
 
         int score = (i < m_scores.size()) ? m_scores[i] : 0;
-        QLabel* lblScore = new QLabel(QString("%1 / 20").arg(score));
+        QLabel* lblScore = new QLabel(QString("%1 / 100").arg(score));
         lblScore->setMinimumWidth(90);
 
         connect(btnPlus, &QPushButton::clicked, this, [this, i]() {
             if (m_net->isHost()) {
-                m_game.addPoints(i, 3);
+                m_game.addPoints(i, 10);
                 hostBroadcastScores();
             } else {
-                m_net->sendMessage(QString("ADDPOINT:%1;3").arg(i));
+                m_net->sendMessage(QString("ADDPOINT:%1;10").arg(i));
             }
         });
         connect(btnMinus, &QPushButton::clicked, this, [this, i]() {
             if (m_net->isHost()) {
-                m_game.addPoints(i, -3);
+                m_game.addPoints(i, -10);
                 hostBroadcastScores();
             } else {
-                m_net->sendMessage(QString("ADDPOINT:%1;-3").arg(i));
+                m_net->sendMessage(QString("ADDPOINT:%1;-10").arg(i));
             }
         });
 
@@ -514,6 +534,13 @@ void MainWindow::showScoreScreen() {
     }
 
     box->addStretch();
+
+    if (m_net->isHost() && m_players.size() < 2) {
+        ui->btnContinue->setEnabled(false);
+    } else {
+        ui->btnContinue->setEnabled(true);
+    }
+
     goToPage(ui->page_7);
 }
 
@@ -557,7 +584,9 @@ void MainWindow::onContinue() {
 }
 
 void MainWindow::onNewGame() {
+    m_net->disconnectAll();
     m_game.resetGame();
+    m_players.clear();
     ui->listPlayers->clear();
     m_timer->stop();
     goToPage(ui->page_1);
@@ -571,8 +600,8 @@ void MainWindow::onShowRules() {
                              "3. Художник выбирает одно из трёх слов.\n"
                              "4. Художник рисует слово за 60 секунд,\n"
                              "   остальные угадывают.\n"
-                             "5. Угадавшему и художнику: +3 очка каждому.\n"
-                             "6. Побеждает первый, кто наберёт 20 очков.");
+                             "5. Угадавшему и художнику: +10 очка каждому.\n"
+                             "6. Побеждает первый, кто наберёт 100 очков.");
 }
 
 void MainWindow::onOpenMenu() {
@@ -584,8 +613,10 @@ void MainWindow::onOpenMenu() {
 
 
 void MainWindow::onMenuReset() {
+    m_net->disconnectAll();
     m_timer->stop();
     m_game.resetGame();
+    m_players.clear();
     ui->listPlayers->clear();
     goToPage(ui->page_1);
 }
@@ -631,6 +662,7 @@ void MainWindow::hostStartTurn() {
 
 void MainWindow::applyTurn(int artistIndex, int round) {
     m_artistIndex = artistIndex;
+    m_round = round;
 
     QString artistName = (artistIndex >= 0 && artistIndex < m_players.size())
                              ? m_players[artistIndex] : QString();
@@ -678,8 +710,32 @@ void MainWindow::onPeerConnected() {
     }
 }
 
-void MainWindow::onPeerDisconnected() {
-    QMessageBox::information(this, "Сеть", "Игрок отключился.");
+void MainWindow::onPeerDisconnected(const QString& nick) {
+    if (m_net->isHost()) {
+        if (!nick.isEmpty()) {
+            int idx = m_players.indexOf(nick);
+            if (idx >= 0) {
+                m_players.removeAt(idx);
+            }
+        }
+        ui->listPlayers->clear();
+        for (int i = 0; i < m_players.size(); i++) {
+            QString label = m_players[i];
+            if (i == 0) label += "  (хост)";
+            else if (m_players[i] == m_nickname) label += "  (вы)";
+            ui->listPlayers->addItem(label);
+        }
+        m_net->sendMessage("PLAYERS:" + m_players.join(","));
+    } else {
+        if (ui->stack->currentWidget() == ui->page_1) return;
+        QMessageBox::information(this, "Сеть", "Соединение с хостом потеряно.");
+        m_net->disconnectAll();
+        m_game.resetGame();
+        m_players.clear();
+        ui->listPlayers->clear();
+        m_timer->stop();
+        goToPage(ui->page_1);
+    }
 }
 
 void MainWindow::onNetMessage(const QString& text) {
@@ -688,6 +744,7 @@ void MainWindow::onNetMessage(const QString& text) {
             m_players << text.mid(5);
             ui->listPlayers->addItem(text.mid(5));
             m_net->sendMessage("PLAYERS:" + m_players.join(","));
+            m_net->sendMessage("HOSTIP:" + myLocalIp());
         }
     }
     else if (text.startsWith("PLAYERS:")) {
@@ -703,13 +760,17 @@ void MainWindow::onNetMessage(const QString& text) {
             ui->listPlayers->addItem(label);
         }
     }
+    else if (text.startsWith("HOSTIP:")) {
+        ui->lblHostIp->setText("IP: " + text.mid(7));
+        ui->lblHostPort->setText("порт: 55555");
+    }
     else if (text.startsWith("START:")) {
         int d = text.mid(6).toInt();
         m_difficulty = (d == 0) ? Difficulty::Easy
                        : (d == 1) ? Difficulty::Medium : Difficulty::Hard;
         if (!m_net->isHost()) {
             m_game.resetGame();
-            m_game.startSession(m_difficulty, 20);
+            m_game.startSession(m_difficulty, 100);
             for (const QString& name : m_players) {
                 m_game.players().addPlayer(name.toStdString());
             }

@@ -55,13 +55,14 @@ private slots:
     void onMenuOk();
 
     void onPeerConnected();
-    void onPeerDisconnected();
+    void onPeerDisconnected(const QString& nick);
     void onNetMessage(const QString& text);
     void onNetError(const QString& text);
 
 private:
     void showWordScreen();
     void showDrawScreen();
+    void setDrawingControlsEnabled(bool on);
     void showScoreScreen();
     void updateTimerLabel();
     void buildPalette();
@@ -84,6 +85,7 @@ private:
     QStringList m_players;
     Difficulty  m_difficulty;
     int         m_artistIndex;
+    int         m_round = 0;
 
     bool amIArtist() const;
     void hostStartTurn();

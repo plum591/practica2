@@ -14,6 +14,12 @@ NetworkManager::NetworkManager(QObject* parent)
 bool NetworkManager::startHost(quint16 port) {
     m_isHost = true;
 
+    disconnectAll();
+
+    if (m_server) {
+        delete m_server;
+        m_server = nullptr;
+    }
     m_server = new QTcpServer(this);
     connect(m_server, &QTcpServer::newConnection,
             this, &NetworkManager::onNewConnection);
@@ -92,6 +98,14 @@ void NetworkManager::disconnectAll() {
     }
 }
 
+void NetworkManager::kickByNick(const QString& nick) {
+    for (QTcpSocket* socket : m_sockets) {
+        if (socket->property("nick").toString() == nick) {
+            socket->disconnectFromHost();
+            break;
+        }
+    }
+}
 
 // У хоста: подключился новый гость.
 void NetworkManager::onNewConnection() {
@@ -122,6 +136,9 @@ void NetworkManager::onReadyRead() {
         QByteArray line = socket->readLine();
         QString text = QString::fromUtf8(line).trimmed();
         if (!text.isEmpty()) {
+            if (text.startsWith("NICK:")) {
+                socket->setProperty("nick", text.mid(5));
+            }
             emit messageReceived(text);
         }
     }
@@ -130,9 +147,11 @@ void NetworkManager::onReadyRead() {
 // Кто-то отключился
 void NetworkManager::onSocketDisconnected() {
     QTcpSocket* socket = qobject_cast<QTcpSocket*>(sender());
+    QString nick;
     if (socket) {
+        nick = socket->property("nick").toString();
         m_sockets.removeAll(socket);
         socket->deleteLater();
     }
-    emit peerDisconnected();
+    emit peerDisconnected(nick);
 }
